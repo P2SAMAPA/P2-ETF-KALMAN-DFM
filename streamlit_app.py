@@ -10,7 +10,7 @@ from us_calendar import next_trading_day
 
 # Page config
 st.set_page_config(
-    page_title="Kalman DFM Engine",
+    page_title="Kalman DFM with Macro",
     page_icon="🔄",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -75,7 +75,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Title
-st.markdown('<div class="main-header">🔄 Kalman Smoother Dynamic Factor Model</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🔄 Kalman Smoother Dynamic Factor Model + Macro</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">State‑space factor model with time‑varying loadings | EM estimation | Next‑day return forecast</div>', unsafe_allow_html=True)
 
 # Sidebar
@@ -86,6 +86,7 @@ st.sidebar.markdown(f"**Next Trading Day:** `{next_trading_day()}`")
 st.sidebar.markdown("**Method:** Dynamic Factor Model (Kalman filter + RTS smoother)")
 st.sidebar.markdown(f"**Latent factors:** {config.K_FACTORS}")
 st.sidebar.markdown("**Rolling window:** 252 days")
+st.sidebar.markdown("**Macro indicators included:** " + ", ".join(config.MACRO_COLUMNS[:3]) + "...")
 st.sidebar.markdown("---")
 st.sidebar.caption("Data: [P2SAMAPA/fi-etf-macro-signal-master-data](https://huggingface.co/datasets/P2SAMAPA/fi-etf-macro-signal-master-data)")
 
@@ -93,16 +94,16 @@ st.sidebar.caption("Data: [P2SAMAPA/fi-etf-macro-signal-master-data](https://hug
 with st.expander("📖 How does the model work?"):
     st.markdown("""
     <div class="info-box">
-    The Dynamic Factor Model assumes that asset returns are driven by a small number of <strong>latent factors</strong> (here k=3) with <strong>time‑varying loadings</strong>:
+    The Dynamic Factor Model assumes that asset returns <strong>and macro indicators</strong> are driven by a small number of <strong>latent factors</strong> (here k=3) with <strong>time‑varying loadings</strong>:
     <br><br>
-    <code>r_t = Λ_t · f_t + ε_t</code><br>
+    <code>[r_t; m_t] = Λ_t · f_t + ε_t</code><br>
     <code>f_t = A · f_{t-1} + η_t</code>
     <br><br>
-    - <strong>Λ_t</strong> : factor loadings (estimated via EM)<br>
+    - <strong>Λ_t</strong> : factor loadings for both ETFs and macro variables (estimated via EM)<br>
     - <strong>f_t</strong> : latent factors (AR(1) process)<br>
     - <strong>ε_t, η_t</strong> : Gaussian noise<br>
     <br>
-    The model is re‑estimated daily on the last 252 days using the Expectation‑Maximisation algorithm (Kalman smoother). The next‑day return forecast is <code>Λ_t · E[f_{t+1}]</code>.
+    The model is re‑estimated daily on the last 252 days. The next‑day return forecast for ETFs is <code>Λ_t[ETF] · E[f_{t+1}]</code>.
     </div>
     """, unsafe_allow_html=True)
 
@@ -150,7 +151,7 @@ st.session_state['run_date'] = data['run_date']
 universes = data["universes"]
 
 st.header("📈 Top ETFs by Predicted Return")
-st.markdown("*Forecasted next‑day return from the dynamic factor model.*")
+st.markdown("*Forecasted next‑day return from the dynamic factor model (macro‑augmented).*")
 
 # Display each universe
 for universe_name, uni_data in universes.items():
@@ -169,15 +170,30 @@ for universe_name, uni_data in universes.items():
                 <div class="etf-return">pred return <span class="{color_class}">{pred:.2%}</span></div>
             </div>
             """, unsafe_allow_html=True)
-    # Optional expander with factor loadings
+    
+    # Expandable section: Factor loadings (ETFs + macro)
     if "factor_loadings" in uni_data:
-        with st.expander("📊 Factor Loadings (3 factors)"):
+        with st.expander("📊 Factor Loadings (ETFs & Macro)"):
             loadings = np.array(uni_data["factor_loadings"])
-            # Get ETF names from top_etfs (or we could store full list, but for brevity we show only top ETFs loadings)
-            etf_names = [e["ticker"] for e in top_etfs]
-            if loadings.shape[0] >= len(etf_names):
-                df_load = pd.DataFrame(loadings[:len(etf_names)], index=etf_names, columns=[f"Factor {i+1}" for i in range(config.K_FACTORS)])
+            # Extract ETF tickers (from the universe) and macro column names
+            # Note: The combined series order is [ETFs... , macros...]. We need to separate them.
+            n_etfs = len(config.UNIVERSES[universe_name])
+            macro_cols = config.MACRO_COLUMNS if config.INCLUDE_MACRO else []
+            all_names = config.UNIVERSES[universe_name] + macro_cols
+            # Ensure loadings rows match the number of series
+            if loadings.shape[0] >= len(all_names):
+                df_load = pd.DataFrame(
+                    loadings[:len(all_names)], 
+                    index=all_names, 
+                    columns=[f"Factor {i+1}" for i in range(config.K_FACTORS)]
+                )
                 st.dataframe(df_load, use_container_width=True)
+                # Add a small heatmap
+                fig = px.imshow(df_load, text_auto=True, aspect="auto", color_continuous_scale="RdBu", title="Loading Magnitudes")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.write("Loading dimensions mismatch – showing raw matrix:")
+                st.dataframe(pd.DataFrame(loadings))
     st.divider()
 
 # Historical prediction trend (if multiple files)
@@ -208,4 +224,4 @@ with st.spinner("Loading historical data..."):
     else:
         st.info("Not enough historical data to plot trend.")
 
-st.caption("The model is retrained daily on a rolling 252‑day window. Positive predicted return → long signal.")
+st.caption("Model includes 6 macro variables (VIX, DXY, yield curve, credit spreads). Retrained daily on a rolling 252‑day window.")

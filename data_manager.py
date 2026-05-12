@@ -19,6 +19,7 @@ def load_master_data():
     return df
 
 def prepare_returns_matrix(df, universe_tickers):
+    """Return ETF log returns (only) as DataFrame."""
     returns = pd.DataFrame(index=df.index)
     for ticker in universe_tickers:
         if ticker in df.columns:
@@ -27,3 +28,15 @@ def prepare_returns_matrix(df, universe_tickers):
                 returns[ticker] = np.log(price / price.shift(1))
     returns = returns.dropna(how='all')
     return returns
+
+def prepare_combined_matrix(df, universe_tickers):
+    """
+    Return combined DataFrame: ETF log returns + macro levels.
+    Macro columns are taken as levels (we assume stationary, but we can difference if needed).
+    """
+    # ETF returns
+    etf_returns = prepare_returns_matrix(df, universe_tickers)
+    # Macro levels (same index)
+    macro = df[config.MACRO_COLUMNS].copy() if config.INCLUDE_MACRO else pd.DataFrame()
+    combined = pd.concat([etf_returns, macro], axis=1).dropna()
+    return combined

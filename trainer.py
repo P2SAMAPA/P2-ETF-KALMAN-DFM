@@ -1,7 +1,3 @@
-"""
-Daily training: on rolling 252‑day window, fit DFM via EM, forecast next‑day returns,
-score each ETF by factor‑explained component, rank and output top 3 per universe.
-"""
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -22,36 +18,40 @@ def main():
 
     for universe_name, tickers in config.UNIVERSES.items():
         print(f"\n=== Universe: {universe_name} ===")
-        # Prepare returns (ETFs only, no macro for this engine – but we could include macro as extra series)
-        returns = data_manager.prepare_returns_matrix(df, tickers)
-        if returns.empty or len(returns) < config.ROLLING_WINDOW + 10:
+        # Prepare combined data (ETF returns + macro)
+        combined = data_manager.prepare_combined_matrix(df, tickers)
+        if combined.empty or len(combined) < config.ROLLING_WINDOW + 10:
             print("  Insufficient data")
             all_results[universe_name] = {"top_etfs": []}
             continue
 
         # Use last ROLLING_WINDOW days for training
-        train_returns = returns.iloc[-config.ROLLING_WINDOW:].values   # T x n
-        # Fit DFM
-        n_assets = train_returns.shape[1]
+        train_data = combined.iloc[-config.ROLLING_WINDOW:].values   # T x (n_etfs + n_macro)
+        n_assets = train_data.shape[1]
+        
+        # Fit DFM on all observed series (ETFs + macro)
         dfm = KalmanDFM(n_assets=n_assets, k_factors=config.K_FACTORS, em_iter=config.EM_ITERATIONS)
-        dfm.fit(train_returns)
+        dfm.fit(train_data)
 
-        # Forecast next-day returns for the last day of training (i.e., tomorrow relative to training end)
-        # We need to predict using the latest observation: the last row of train_returns
-        last_obs = train_returns[-1:].reshape(1, -1)
-        pred_returns = dfm.forecast_returns(last_obs, horizon=1)   # shape (n,)
-
-        # Create list of (ticker, pred_return)
-        assets = returns.columns.tolist()
+        # Forecast next-day values for ALL series (ETFs + macro)
+        last_obs = train_data[-1:].reshape(1, -1)
+        pred_all = dfm.forecast_returns(last_obs, horizon=1)   # shape (n_assets,)
+        
+        # Extract only ETF returns (first len(tickers) entries)
+        n_etfs = len(tickers)
+        pred_returns = pred_all[:n_etfs]   # only the ETF part
+        
+        # Build dictionary with tickers and predicted returns
+        assets = tickers   # etf names in order (same as columns in combined)
         pred_dict = {ticker: pred_returns[i] for i, ticker in enumerate(assets)}
-        # Sort descending
         sorted_etfs = sorted(pred_dict.items(), key=lambda x: x[1], reverse=True)
         top_etfs = [{"ticker": ticker, "pred_return": float(ret)} for ticker, ret in sorted_etfs[:config.TOP_N]]
 
         print(f"  Top 3 ETFs: {[e['ticker'] for e in top_etfs]} (pred returns: {[e['pred_return'] for e in top_etfs]})")
         all_results[universe_name] = {
             "top_etfs": top_etfs,
-            "run_date": today
+            "run_date": today,
+            "factor_loadings": dfm.get_factor_loadings().tolist()  # includes macro as well
         }
 
     # Save results
@@ -62,7 +62,7 @@ def main():
 
     import push_results
     push_results.push_daily_result(local_path)
-    print("\n=== Kalman Smoother Dynamic Factor Model complete ===")
+    print("\n=== Kalman DFM with Macro Factors complete ===")
 
 if __name__ == "__main__":
     main()

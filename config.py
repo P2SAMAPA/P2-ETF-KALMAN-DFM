@@ -17,7 +17,11 @@ UNIVERSES = {
     ]
 }
 
+# Macro columns (must exist in master_data.parquet)
 MACRO_COLUMNS = ["VIX", "DXY", "T10Y2Y", "TBILL_3M", "IG_SPREAD", "HY_SPREAD"]
+
+# Include macro as observed series in the factor model
+INCLUDE_MACRO = True   # set to False to use only ETF returns
 
 # Rolling window for EM estimation (days)
 ROLLING_WINDOW = 252
@@ -25,9 +29,6 @@ ROLLING_WINDOW = 252
 K_FACTORS = 3
 # EM iterations
 EM_ITERATIONS = 50
-
-# Forecasting horizon (days ahead)
-FORECAST_DAYS = 1
 
 # Ranking
 TOP_N = 3
